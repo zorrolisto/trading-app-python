@@ -34,14 +34,19 @@ vector = FAISS.from_documents(documents, embeddings)
 retriever = vector.as_retriever()
 
 # 2. Crear Agentes
+
+# 1er agente, experto trader
 retriever_tool = create_retriever_tool(
     retriever,
     "langsmith_search",
     "Search for information of trading. For any questions about trading, you must use this tool!",
 )
+
+# 2do agente, buscador de noticias actuales de trading
 search = TavilySearchResults()
 
 
+# 3cer agente comienza, AGENTE QUE USA ALPACA
 class Intervalo(str, Enum):
     HOY = "hoy"
     TRES_DIAS = "3d"
@@ -109,6 +114,7 @@ def get_stocks_from_MSFT_by_interval(intervalo: Intervalo) -> dict:
         '%Y-%m-%d %H:%M:%S')
 
     return bars_df.to_dict(orient='records')
+# 3cer agente termina, AGENTE QUE USA ALPACA
 
 
 tools = [retriever_tool, search, get_stocks_from_MSFT_by_interval]

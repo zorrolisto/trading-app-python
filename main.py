@@ -20,6 +20,9 @@ import pytz
 from datetime import datetime, timedelta
 from alpaca.data import StockHistoricalDataClient, TimeFrame
 from alpaca.data.requests import StockBarsRequest
+from tensorflow.keras.models import load_model
+import numpy as np
+import pandas as pd
 
 
 # 1. Load Retriever
@@ -67,8 +70,8 @@ tz = pytz.timezone('America/New_York')
 @tool
 def get_stocks_from_MSFT_by_interval(intervalo: Intervalo) -> dict:
     """
-    Returns historical stock data for Microsoft (MSFT) based on a specified time interval. It 
-    can also be utilized for making predictions (use months or years for that). 
+    Returns historical stock data for Microsoft (MSFT) based on a specified time interval.
+    This can't be used to predict, only to know information
 
     Arguments:
         time: Time - An object containing information about the desired time interval.
@@ -116,9 +119,64 @@ def get_stocks_from_MSFT_by_interval(intervalo: Intervalo) -> dict:
     return bars_df.to_dict(orient='records')
 # 3cer agente termina, AGENTE QUE USA ALPACA
 
+# 4to agente para predecir
 
-tools = [retriever_tool, search, get_stocks_from_MSFT_by_interval]
 
+@tool
+def get_prediction_for_tomorrow_in_MSFT_stock() -> dict:
+    """
+    HACE PREDICCION DEL DIA DE MÑN
+    Retorna si es momento o no de comprar o vender, diciendo si las acciones bajaran o subiran mañana.
+    Remember to inform the user that Alpaca API does not return data on Saturdays and Sundays; 
+    it only provides data again after one month so predictions made are based on Friday if it's Saturday or Sunday."
+    """
+
+    fecha_hace_10_dias = datetime.now() - timedelta(days=10)
+    fecha_hace_10_dias_str = fecha_hace_10_dias.strftime("%Y-%m-%d")
+
+    request_params = StockBarsRequest(
+        symbol_or_symbols=['MSFT'],
+        timeframe=TimeFrame.Day,
+        start=fecha_hace_10_dias_str
+    )
+
+    bars_df = data_client.get_stock_bars(
+        request_params).df.tz_convert('America/New_York', level=1)
+    df = pd.DataFrame(bars_df)
+    df['return'] = np.log(df['close'] / df['close'].shift(1))
+
+    lags, cols = 5, []
+    for lag in range(1, lags + 1):
+        col = f'lag_{lag}'
+        df[col] = df['return'].shift(lag)
+        cols.append(col)
+
+    ultimo_lag_1 = df['lag_1'].iloc[-1]
+    ultimo_lag_2 = df['lag_2'].iloc[-1]
+    ultimo_lag_3 = df['lag_3'].iloc[-1]
+    ultimo_lag_4 = df['lag_4'].iloc[-1]
+    ultimo_lag_5 = df['lag_5'].iloc[-1]
+
+    datos_pd = pd.DataFrame({
+        'lag_1': [ultimo_lag_1],
+        'lag_2': [ultimo_lag_2],
+        'lag_3': [ultimo_lag_3],
+        'lag_4': [ultimo_lag_4],
+        'lag_5': [ultimo_lag_5]
+    })
+
+    modelo_cargado = load_model("modelo_entrenado.h5")
+    prediction = modelo_cargado.predict(datos_pd)
+
+    tendencia = "bajada" if prediction[0][0] < 0.5 else "subida"
+    respuesta = "vender" if tendencia == "bajada" else "comprar"
+
+    mensaje = f"Según el agente de DEEP LEARNING, la tendencia es de {tendencia} así que es momento de {respuesta} porque mañana {'bajará' if tendencia == 'bajada' else 'subirán'}, respuesta del bot {prediction[0][0]}"
+    return mensaje
+
+
+tools = [retriever_tool, search, get_stocks_from_MSFT_by_interval,
+         get_prediction_for_tomorrow_in_MSFT_stock]
 
 # 3. Create Agent
 prompt = hub.pull("hwchase17/openai-functions-agent")

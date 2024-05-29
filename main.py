@@ -178,7 +178,7 @@ def get_prediction_for_tomorrow_in_MSFT_stock() -> dict:
 
 
 @tool
-def calculate_earning_of_bought_dayA_and_sell_dayB(dayA: datetime, dayB: datetime, numberOfActionsToBuy) -> dict:
+def calculate_earning_of_bought_dayA_and_sell_dayB(dayA: datetime, dayB: datetime) -> dict:
     """
         Return the costs for Day A and Day B and the profit that would 
         have been made by buying on Day A and selling on Day B
@@ -195,10 +195,8 @@ def calculate_earning_of_bought_dayA_and_sell_dayB(dayA: datetime, dayB: datetim
         end=fechaA_mas_1_dia_str
     )
     bars_df = data_client.get_stock_bars(
-        request_params).df.tz_convert('America/New_York', level=1)
+        request_params).df  # .tz_convert('America/New_York', level=1)
     bars_df.reset_index(inplace=True)
-    bars_df['timestamp'] = bars_df['timestamp'].dt.strftime(
-        '%Y-%m-%d %H:%M:%S')
     recordsA = bars_df.to_dict(orient='records')
 
     request_params = StockBarsRequest(
@@ -208,23 +206,18 @@ def calculate_earning_of_bought_dayA_and_sell_dayB(dayA: datetime, dayB: datetim
         end=fechaB_mas_1_dia_str
     )
     bars_df = data_client.get_stock_bars(
-        request_params).df.tz_convert('America/New_York', level=1)
+        request_params).df  # .tz_convert('America/New_York', level=1)
     bars_df.reset_index(inplace=True)
-    bars_df['timestamp'] = bars_df['timestamp'].dt.strftime(
-        '%Y-%m-%d %H:%M:%S')
     recordsB = bars_df.to_dict(orient='records')
     gananciaPorAccion = 0
-    gananciaTotal = 0
     if len(recordsA) > 0 and len(recordsB) > 0:
         closeA = recordsA[0]["close"]
         closeB = recordsB[0]["close"]
         gananciaPorAccion = closeB - closeA
-        gananciaTotal = gananciaPorAccion * numberOfActionsToBuy
     return {
         'recordsA': recordsA,
         'recordsB': recordsB,
         'gananciaPorAccion': gananciaPorAccion,
-        'gananciaTotal': gananciaTotal
     }
 
 

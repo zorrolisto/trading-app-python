@@ -2,6 +2,7 @@
 
 from enum import Enum
 import os
+import shutil
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from fastapi.middleware.cors import CORSMiddleware
 from langserve import add_routes
@@ -15,7 +16,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.document_loaders import WebBaseLoader
 from langchain_openai import ChatOpenAI
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Query
 import pytz
 from datetime import datetime, timedelta
 from alpaca.data import StockHistoricalDataClient, TimeFrame
@@ -23,7 +24,24 @@ from alpaca.data.requests import StockBarsRequest
 from tensorflow.keras.models import load_model
 import numpy as np
 import pandas as pd
+# --------------------- SIMULATION ---------------------
+from lumibot.brokers import Alpaca
+from lumibot.backtesting import YahooDataBacktesting
+from lumibot.strategies.strategy import Strategy
+from lumibot.traders import Trader
+from datetime import datetime
+from alpaca_trade_api import REST
+from timedelta import Timedelta
+from finbert_utils import estimate_sentiment
+import logging
 
+# disable tokenizers
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # 1. Load Retriever
 loader = WebBaseLoader(["https://www.investopedia.com/learn-how-to-trade-the-market-in-5-steps-4692230",
@@ -122,11 +140,19 @@ def get_stocks_from_MSFT_by_interval(intervalo: Intervalo) -> dict:
 # 4to agente para predecir
 
 
+class StockModel(Enum):
+    MICROSOFT = "msft.h5"
+    TESLA = "tsla.h5"
+    AMD = "amd.h5"
+    NVIDIA = "nvda.h5"
+    APPLE = "aapl.h5"
+
+
 @tool
-def get_prediction_for_tomorrow_in_MSFT_stock() -> dict:
+def get_prediction_for_tomorrow_in_MSFT_stock(stockModel: StockModel) -> dict:
     """
-    HACE PREDICCION DEL DIA DE MÑN
-    Retorna si es momento o no de comprar o vender, diciendo si las acciones bajaran o subiran mañana.
+    HACE PREDICCION
+    Retorna si es momento o no de comprar o vender, diciendo si las acciones bajaran o subiran.
     Remember to inform the user that Alpaca API does not return data on Saturdays and Sundays; 
     it only provides data again after one month so predictions made are based on Friday if it's Saturday or Sunday."
 
@@ -167,13 +193,17 @@ def get_prediction_for_tomorrow_in_MSFT_stock() -> dict:
         'lag_5': [ultimo_lag_5]
     })
 
-    modelo_cargado = load_model("modelo_entrenado.h5")
+    model_path = os.path.join("deep-learning-models", stockModel.value)
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"No such file: {model_path}")
+    modelo_cargado = load_model(model_path)
+
     prediction = modelo_cargado.predict(datos_pd)
 
     tendencia = "bajada" if prediction[0][0] < 0.5 else "subida"
     respuesta = "vender" if tendencia == "bajada" else "comprar"
 
-    mensaje = f"Según el agente de DEEP LEARNING, la tendencia es de {tendencia} así que es momento de {respuesta} porque mañana {'bajará' if tendencia == 'bajada' else 'subirán'}, respuesta del bot {prediction[0][0]}"
+    mensaje = f"Según el agente de DEEP LEARNING, la tendencia es de {tendencia} así que es momento de {respuesta} porque {'bajará' if tendencia == 'bajada' else 'subirán'}, respuesta del bot {prediction[0][0]}"
     return mensaje
 
 
@@ -289,6 +319,168 @@ add_routes(
     agent_executor.with_types(input_type=Input, output_type=Output),
     path="/agent",
 )
+
+
+@app.get("/")
+async def test():
+    return {"message": "Hello World"}
+
+BASE_URL = "https://paper-api.alpaca.markets"
+ALPACA_API_KEY = os.environ["ALPACA_API_KEY_ID"]
+ALPACA_API_SECRET_KEY = os.environ["ALPACA_API_SECRET_KEY"]
+ALPACA_CREDS = {
+    "API_KEY": ALPACA_API_KEY,
+    "API_SECRET": ALPACA_API_SECRET_KEY,
+    "PAPER": True
+}
+print("ALPACA_CREDS")
+print(ALPACA_CREDS)
+
+
+class MLTrader(Strategy):
+    def initialize(self, symbol: str = "SPY", cash_at_risk: float = .5):
+        self.symbol = symbol
+        self.sleeptime = "24H"
+        self.last_trade = None
+        self.cash_at_risk = cash_at_risk
+        self.api = REST(base_url=BASE_URL, key_id=ALPACA_API_KEY,
+                        secret_key=ALPACA_API_SECRET_KEY)
+
+    def position_sizing(self):
+        cash = self.get_cash()
+        last_price = self.get_last_price(self.symbol)
+        quantity = round(cash * self.cash_at_risk / last_price, 0)
+        return cash, last_price, quantity
+
+    def get_dates(self):
+        today = self.get_datetime()
+        three_days_prior = today - Timedelta(days=3)
+        return today.strftime('%Y-%m-%d'), three_days_prior.strftime('%Y-%m-%d')
+
+    def get_sentiment(self):
+        today, three_days_prior = self.get_dates()
+        news = self.api.get_news(symbol=self.symbol,
+                                 start=three_days_prior,
+                                 end=today)
+        news = [ev.__dict__["_raw"]["headline"] for ev in news]
+        probability, sentiment = estimate_sentiment(news)
+        return probability, sentiment
+
+    def on_trading_iteration(self):
+        cash, last_price, quantity = self.position_sizing()
+        probability, sentiment = self.get_sentiment()
+
+        if cash > last_price:
+            if sentiment == "positive" and probability > .999:
+                if self.last_trade == "sell":
+                    self.sell_all()
+                order = self.create_order(
+                    self.symbol,
+                    quantity,
+                    "buy",
+                    type="bracket",
+                    take_profit_price=last_price*1.20,
+                    stop_loss_price=last_price*.95
+                )
+                self.submit_order(order)
+                self.last_trade = "buy"
+            elif sentiment == "negative" and probability > .999:
+                if self.last_trade == "buy":
+                    self.sell_all()
+                order = self.create_order(
+                    self.symbol,
+                    quantity,
+                    "sell",
+                    type="bracket",
+                    take_profit_price=last_price*.8,
+                    stop_loss_price=last_price*1.05
+                )
+                self.submit_order(order)
+                self.last_trade = "sell"
+
+
+LOGS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), 'logs'))
+
+
+def read_specific_files():
+    try:
+        result = {}
+        for filename in os.listdir(LOGS_DIR):
+            if filename.endswith("_tearsheet.html"):
+                file_path = os.path.join(LOGS_DIR, filename)
+                with open(file_path, 'r') as file:
+                    result["plot_content"] = file.read()
+                logger.info(f"Read plot content from {file_path}")
+
+            elif filename.endswith("_trades.html"):
+                file_path = os.path.join(LOGS_DIR, filename)
+                with open(file_path, 'r') as file:
+                    result["trades_content"] = file.read()
+                logger.info(f"Read trades content from {file_path}")
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Error reading files: {e}")
+        raise HTTPException(status_code=500, detail="Failed to read files")
+
+
+class SimulationParams(BaseModel):
+    start_date: str
+    end_date: str
+    symbol: str
+    cash_at_risk: float
+    budget: float
+
+
+@app.get("/simulation")
+async def simulation(
+    start_date: datetime = Query(...,
+                                 description="Start date of the simulation"),
+    end_date: datetime = Query(..., description="End date of the simulation"),
+    symbol: str = Query(..., description="Symbol for trading"),
+    cash_at_risk: float = Query(...,
+                                description="Cash at risk for the simulation"),
+    budget: float = Query(...,
+                          description="Initial budget for the simulation"),
+):
+    print(f"Start Date: {start_date}")
+    print(f"End Date: {end_date}")
+    print(f"Symbol: {symbol}")
+    print(f"Cash at Risk: {cash_at_risk}")
+    print(f"Budget: {budget}")
+    try:
+        for filename in os.listdir(LOGS_DIR):
+            file_path = os.path.join(LOGS_DIR, filename)
+            try:
+                if os.path.isfile(file_path) or os.path.islink(file_path):
+                    os.unlink(file_path)
+                elif os.path.isdir(file_path):
+                    shutil.rmtree(file_path)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500, detail=f"Failed to delete {file_path}. Reason: {e}")
+        broker = Alpaca(ALPACA_CREDS)
+        strategy = MLTrader(name='mlstrat', broker=broker,
+                            parameters={"symbol": symbol,
+                                        "cash_at_risk": cash_at_risk})
+        strategy.backtest(
+            YahooDataBacktesting,
+            start_date,
+            end_date,
+            name="Simulación",
+            parameters={"symbol": symbol,
+                        "cash_at_risk": cash_at_risk, "budget": budget},
+        )
+
+        logger.info("Backtest result generated and read successfully")
+
+        content = read_specific_files()
+        return content
+    except Exception as e:
+        logger.error("An error occurred during the simulation: %s", e)
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
 
 if __name__ == "__main__":
     import uvicorn

@@ -102,7 +102,7 @@ Werkzeug==3.0.3
 wrapt==1.16.0
 yarl==1.9.4
 aiodns==3.1.1
-alpaca-trade-api
+alpaca-trade-api==3.2.0
 alpha-vantage==2.3.1
 appdirs==1.4.4
 APScheduler==3.10.4

@@ -1,3 +1,5 @@
 trd
 serverAUX.py
 .DS_Store
+env-t
+logs/*

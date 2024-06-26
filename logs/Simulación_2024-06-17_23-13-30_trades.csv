@@ -1,3 +1,0 @@
-time,strategy,identifier,symbol,side,type,status,multiplier,time_in_force,asset.strike,asset.multiplier,asset.asset_type,price,filled_quantity,trade_cost
-2023-11-03 09:30:00-04:00,Simulación,fd41cdab64a643d59706bd3c6ec02551,AAPL,buy,market,new,1,gtc,0.0,1,stock,,,
-2023-11-03 09:30:00-04:00,Simulación,fd41cdab64a643d59706bd3c6ec02551,AAPL,buy,market,fill,1,gtc,0.0,1,stock,174.24000549316406,287.0,0.0

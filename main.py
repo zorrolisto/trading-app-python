@@ -205,12 +205,12 @@ def get_prediction_for_tomorrow_in_stockModel(stockModel: StockModel) -> dict:
     model_path = os.path.join("deep-learning-models", stockModel.value)
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"No such file: {model_path}")
-    # modelo_cargado = load_model(model_path)
-    # prediction = modelo_cargado.predict(datos_pd)
-    # tendencia = "bajada" if prediction[0][0] < 0.5 else "subida"
-    tendencia = "bajada" if random.random() < 0.5 else "subida"
+    modelo_cargado = load_model(model_path)
+    prediction = modelo_cargado.predict(datos_pd)
+    tendencia = "bajada" if prediction < 0.5 else "subida"
     respuesta = "vender" if tendencia == "bajada" else "comprar"
 
+    # prediccion
     mensaje = f"Según el agente de DEEP LEARNING, la tendencia es de {tendencia} así que es momento de {respuesta} porque {'bajará' if tendencia == 'bajada' else 'subirán'}"
     return mensaje
 

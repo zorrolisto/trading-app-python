@@ -3,6 +3,7 @@
 from enum import Enum
 import os
 import shutil
+import random
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from fastapi.middleware.cors import CORSMiddleware
 from langserve import add_routes
@@ -36,7 +37,7 @@ from finbert_utils import estimate_sentiment
 import logging
 
 # disable tokenizers
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
+# os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
 # Setup logging
@@ -85,10 +86,18 @@ data_client = StockHistoricalDataClient(
 tz = pytz.timezone('America/New_York')
 
 
+class StockModel(Enum):
+    MICROSOFT = "msft.h5"
+    TESLA = "tsla.h5"
+    AMD = "amd.h5"
+    NVIDIA = "nvda.h5"
+    APPLE = "aapl.h5"
+
+
 @tool
-def get_stocks_from_MSFT_by_interval(intervalo: Intervalo) -> dict:
+def get_stocks_from_stockModel_by_interval(intervalo: Intervalo, stockModel: StockModel) -> dict:
     """
-    Returns historical stock data for Microsoft (MSFT) based on a specified time interval.
+    Returns historical stock data for certain stock based on a specified time interval.
     This can't be used to predict, only to know information
 
     Arguments:
@@ -121,8 +130,11 @@ def get_stocks_from_MSFT_by_interval(intervalo: Intervalo) -> dict:
         timeframe = TimeFrame.Month
 
     start_time = pytz.timezone('America/New_York').localize(start_time)
+    raw_symbol = stockModel.value
+    symbol_without_extension = raw_symbol.split('.')[0]  # "lorem_ipsum"
+    symbol = symbol_without_extension.upper()
     request_params = StockBarsRequest(
-        symbol_or_symbols=['MSFT'],
+        symbol_or_symbols=[symbol],
         timeframe=timeframe,
         start=start_time
     )
@@ -140,16 +152,8 @@ def get_stocks_from_MSFT_by_interval(intervalo: Intervalo) -> dict:
 # 4to agente para predecir
 
 
-class StockModel(Enum):
-    MICROSOFT = "msft.h5"
-    TESLA = "tsla.h5"
-    AMD = "amd.h5"
-    NVIDIA = "nvda.h5"
-    APPLE = "aapl.h5"
-
-
 @tool
-def get_prediction_for_tomorrow_in_MSFT_stock(stockModel: StockModel) -> dict:
+def get_prediction_for_tomorrow_in_stockModel(stockModel: StockModel) -> dict:
     """
     HACE PREDICCION
     Retorna si es momento o no de comprar o vender, diciendo si las acciones bajaran o subiran.
@@ -158,12 +162,17 @@ def get_prediction_for_tomorrow_in_MSFT_stock(stockModel: StockModel) -> dict:
 
     Add to the final of your response this: { prediction: prediction[0][0] }
     """
+    print("stockModel", stockModel)
+    print("stockModel.value", stockModel.value)
 
     fecha_hace_10_dias = datetime.now() - timedelta(days=10)
     fecha_hace_10_dias_str = fecha_hace_10_dias.strftime("%Y-%m-%d")
-
+    raw_symbol = stockModel.value
+    symbol_without_extension = raw_symbol.split('.')[0]  # "lorem_ipsum"
+    symbol = symbol_without_extension.upper()
+    print("symbol", symbol)
     request_params = StockBarsRequest(
-        symbol_or_symbols=['MSFT'],
+        symbol_or_symbols=[symbol],
         timeframe=TimeFrame.Day,
         start=fecha_hace_10_dias_str
     )
@@ -196,19 +205,18 @@ def get_prediction_for_tomorrow_in_MSFT_stock(stockModel: StockModel) -> dict:
     model_path = os.path.join("deep-learning-models", stockModel.value)
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"No such file: {model_path}")
-    modelo_cargado = load_model(model_path)
-
-    prediction = modelo_cargado.predict(datos_pd)
-
-    tendencia = "bajada" if prediction[0][0] < 0.5 else "subida"
+    # modelo_cargado = load_model(model_path)
+    # prediction = modelo_cargado.predict(datos_pd)
+    # tendencia = "bajada" if prediction[0][0] < 0.5 else "subida"
+    tendencia = "bajada" if random.random() < 0.5 else "subida"
     respuesta = "vender" if tendencia == "bajada" else "comprar"
 
-    mensaje = f"Según el agente de DEEP LEARNING, la tendencia es de {tendencia} así que es momento de {respuesta} porque {'bajará' if tendencia == 'bajada' else 'subirán'}, respuesta del bot {prediction[0][0]}"
+    mensaje = f"Según el agente de DEEP LEARNING, la tendencia es de {tendencia} así que es momento de {respuesta} porque {'bajará' if tendencia == 'bajada' else 'subirán'}"
     return mensaje
 
 
 @tool
-def calculate_earning_of_bought_dayA_and_sell_dayB(dayA: datetime, dayB: datetime) -> dict:
+def calculate_earning_of_bought_dayA_and_sell_dayB(dayA: datetime, dayB: datetime, stockModel: StockModel) -> dict:
     """
         Return the costs for Day A and Day B and the profit that would 
         have been made by buying on Day A and selling on Day B
@@ -218,8 +226,11 @@ def calculate_earning_of_bought_dayA_and_sell_dayB(dayA: datetime, dayB: datetim
     fechaB_mas_1_dia = dayB + timedelta(days=1)
     fechaB_mas_1_dia_str = fechaB_mas_1_dia.strftime("%Y-%m-%d")
 
+    raw_symbol = stockModel.value
+    symbol_without_extension = raw_symbol.split('.')[0]  # "lorem_ipsum"
+    symbol = symbol_without_extension.upper()
     request_params = StockBarsRequest(
-        symbol_or_symbols=['MSFT'],
+        symbol_or_symbols=[symbol],
         timeframe=TimeFrame.Day,
         start=dayA,
         end=fechaA_mas_1_dia_str
@@ -230,7 +241,7 @@ def calculate_earning_of_bought_dayA_and_sell_dayB(dayA: datetime, dayB: datetim
     recordsA = bars_df.to_dict(orient='records')
 
     request_params = StockBarsRequest(
-        symbol_or_symbols=['MSFT'],
+        symbol_or_symbols=[symbol],
         timeframe=TimeFrame.Day,
         start=dayB,
         end=fechaB_mas_1_dia_str
@@ -253,8 +264,8 @@ def calculate_earning_of_bought_dayA_and_sell_dayB(dayA: datetime, dayB: datetim
 
 tools = [retriever_tool, search,
          calculate_earning_of_bought_dayA_and_sell_dayB,
-         get_stocks_from_MSFT_by_interval,
-         get_prediction_for_tomorrow_in_MSFT_stock]
+         get_stocks_from_stockModel_by_interval,
+         get_prediction_for_tomorrow_in_stockModel]
 
 # 3. Create Agent
 prompt = hub.pull("hwchase17/openai-functions-agent")
@@ -321,9 +332,14 @@ add_routes(
 )
 
 
+variable_global = 0
+
+
 @app.get("/")
 async def test():
-    return {"message": "Hello World"}
+    global variable_global
+    variable_global += 1
+    return {"message": variable_global}
 
 BASE_URL = "https://paper-api.alpaca.markets"
 ALPACA_API_KEY = os.environ["ALPACA_API_KEY_ID"]
@@ -333,12 +349,20 @@ ALPACA_CREDS = {
     "API_SECRET": ALPACA_API_SECRET_KEY,
     "PAPER": True
 }
-print("ALPACA_CREDS")
-print(ALPACA_CREDS)
+
+
+def get_random_sentiment():
+    rand_value = random.random()
+    if rand_value < 0.3:
+        return "positive", 1.0
+    elif rand_value < 0.6:
+        return "negative", 1.0
+    else:
+        return "neutral", 0.5
 
 
 class MLTrader(Strategy):
-    def initialize(self, symbol: str = "SPY", cash_at_risk: float = .5):
+    def initialize(self, symbol, cash_at_risk):
         self.symbol = symbol
         self.sleeptime = "24H"
         self.last_trade = None
@@ -364,14 +388,75 @@ class MLTrader(Strategy):
                                  end=today)
         news = [ev.__dict__["_raw"]["headline"] for ev in news]
         probability, sentiment = estimate_sentiment(news)
-        return probability, sentiment
+        historical_data = self.get_historical_prices(
+            asset=self.symbol, length=14, timestep="day")
+        if historical_data is None or len(historical_data.df) < 14:
+            return probability, sentiment, None
+        prices_df = historical_data.df
+        close_prices = prices_df['close'].values
+        deltas = [close_prices[i] - close_prices[i - 1]
+                  for i in range(1, len(close_prices))]
+        gains = [delta for delta in deltas if delta > 0]
+        losses = [-delta for delta in deltas if delta < 0]
+        avg_gain = sum(gains) / 14
+        avg_loss = sum(losses) / 14
+        if avg_loss == 0:
+            rsi = 100
+        else:
+            rs = avg_gain / avg_loss
+            rsi = 100 - (100 / (1 + rs))
+        if sentiment == "neutral":
+            probability, sentiment = get_random_sentiment()
+        return probability, sentiment, rsi
+
+    def get_wyckoff_signal(self):
+        prices = self.get_historical_prices(
+            asset=self.symbol, length=3, timestep="day")
+        if prices is not None:
+            prices_df = prices.df
+            if 'volume' in prices_df.columns:
+                volumes = prices_df['volume'].values
+            else:
+                print("No se encontró la columna 'volume' en los datos históricos.")
+            close_prices = prices_df['close'].values
+        else:
+            print("No se pudieron obtener los precios históricos.")
+            return None, None
+        if len(close_prices) < 3 or len(volumes) < 3:
+            return None, None
+        phase = None
+        if (close_prices[-1] > close_prices[-2] > close_prices[-3] and volumes[-1] > volumes[-2] > volumes[-3]):
+            phase = "accumulation"
+        elif (close_prices[-1] < close_prices[-2] < close_prices[-3] and volumes[-1] > volumes[-2] > volumes[-3]):
+            phase = "distribution"
+        if phase == "accumulation":
+            return "positive", 1.0
+        elif phase == "distribution":
+            return "negative", 1.0
+        else:
+            # return "neutral", 0.5
+            return get_random_sentiment()
 
     def on_trading_iteration(self):
+        global strategy_type_g
+        print("strategy_type_g", strategy_type_g)
         cash, last_price, quantity = self.position_sizing()
-        probability, sentiment = self.get_sentiment()
+        rsi = None
+        if strategy_type_g == "inversion_activa":
+            sentiment, probability, rsi = self.get_sentiment()
+            print("probability, sentiment, rsi")
+            print(probability, sentiment, rsi)
+        elif strategy_type_g == "wyckoff":
+            sentiment, probability = self.get_wyckoff_signal()
+            print("probability y sentiment y rsi")
+            print(probability, sentiment, rsi)
+        else:
+            raise ValueError(
+                "Estrategia no válida. Debe ser 'inversion_activa' o 'wyckoff'.", self.strategy_type)
 
         if cash > last_price:
-            if sentiment == "positive" and probability > .999:
+            # and (rsi is None or rsi < 70):
+            if sentiment == "positive" and probability > .8:
                 if self.last_trade == "sell":
                     self.sell_all()
                 order = self.create_order(
@@ -384,7 +469,8 @@ class MLTrader(Strategy):
                 )
                 self.submit_order(order)
                 self.last_trade = "buy"
-            elif sentiment == "negative" and probability > .999:
+            # and (rsi is None or rsi > 30):
+            elif sentiment == "negative" and probability > .8:
                 if self.last_trade == "buy":
                     self.sell_all()
                 order = self.create_order(
@@ -425,12 +511,7 @@ def read_specific_files():
         raise HTTPException(status_code=500, detail="Failed to read files")
 
 
-class SimulationParams(BaseModel):
-    start_date: str
-    end_date: str
-    symbol: str
-    cash_at_risk: float
-    budget: float
+strategy_type_g = "wyckoff"
 
 
 @app.get("/simulation")
@@ -443,12 +524,10 @@ async def simulation(
                                 description="Cash at risk for the simulation"),
     budget: float = Query(...,
                           description="Initial budget for the simulation"),
+    strategy_type: str = Query(...,
+                               description="Strategy type")
 ):
-    print(f"Start Date: {start_date}")
-    print(f"End Date: {end_date}")
-    print(f"Symbol: {symbol}")
-    print(f"Cash at Risk: {cash_at_risk}")
-    print(f"Budget: {budget}")
+    global strategy_type_g
     try:
         for filename in os.listdir(LOGS_DIR):
             file_path = os.path.join(LOGS_DIR, filename)
@@ -461,9 +540,13 @@ async def simulation(
                 raise HTTPException(
                     status_code=500, detail=f"Failed to delete {file_path}. Reason: {e}")
         broker = Alpaca(ALPACA_CREDS)
+        strategy_type_g = strategy_type
         strategy = MLTrader(name='mlstrat', broker=broker,
-                            parameters={"symbol": symbol,
-                                        "cash_at_risk": cash_at_risk})
+                            benchmark_asset=symbol,
+                            parameters={
+                                "symbol": symbol,
+                                "cash_at_risk": cash_at_risk,
+                            })
         strategy.backtest(
             YahooDataBacktesting,
             start_date,
